@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Collatz explorer</title>
+<style>
+:root{--bg:#f6f7f4;--ink:#16202a;--mute:#5d6b76;--line:#d5dbd6;--dot:#2f6f8f;--hi:#d1495b;--panel:#ffffff;color-scheme:light;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10171d;--ink:#e6ecef;--mute:#92a1ab;--line:#2a3640;--dot:#6cb8d6;--hi:#ff7a8a;--panel:#17212a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10171d;--ink:#e6ecef;--mute:#92a1ab;--line:#2a3640;--dot:#6cb8d6;--hi:#ff7a8a;--panel:#17212a;color-scheme:dark}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:980px;margin:0 auto;padding:24px 16px 48px}
+h1{font:600 28px/1.2 Georgia,"Times New Roman",serif;margin:0 0 6px}
+p.lead{margin:0 0 20px;color:var(--mute);max-width:64ch}
+.controls{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:end;margin-bottom:14px}
+label{display:flex;flex-direction:column;font-size:14px;color:var(--mute);gap:4px}
+input,select,button{font:inherit;color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+input[type=checkbox]{width:18px;height:18px;padding:0}
+label.chk{flex-direction:row;align-items:center;gap:8px;padding-bottom:8px}
+button{cursor:pointer}
+button:hover{border-color:var(--dot)}
+:focus-visible{outline:2px solid var(--hi);outline-offset:2px}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:18px}
+h2{font-size:17px;margin:0 0 4px}
+.sub{font-size:14px;color:var(--mute);margin:0 0 10px}
+canvas{display:block;width:100%;height:340px;cursor:crosshair}
+#traj{height:260px;cursor:default}
+#info{font-size:15px;margin:10px 0 0}
+#info b{color:var(--hi)}
+</style>
+</head>
+<body>
+<main>
+<h1>Collatz explorer</h1>
+<p class="lead">Every dot is one starting number. Its height shows how long the Collatz process takes to reach 1 (or how high it climbs on the way). Click the plot to inspect a number.</p>
+
+<div class="controls">
+<label>Plot numbers up to
+<select id="lim"><option value="1000">1,000</option><option value="10000">10,000</option><option value="100000" selected>100,000</option></select></label>
+<label>Height shows
+<select id="metric"><option value="steps">Steps to reach 1</option><option value="peak">Highest value reached (log scale)</option></select></label>
+<button id="bLong">Jump to longest run</button>
+<button id="bPeak">Jump to highest peak</button>
+</div>
+
+<section>
+<h2>All starting numbers</h2>
+<p class="sub" id="ovSub"></p>
+<canvas id="ov" role="img" aria-label="Scatter plot of Collatz steps for each starting number"></canvas>
+</section>
+
+<section>
+<h2>One number’s journey</h2>
+<div class="controls">
+<label>Starting number
+<input id="n" type="number" min="1" max="1000000000000" value="27"></label>
+<label class="chk"><input id="log" type="checkbox" checked> Log scale</label>
+</div>
+<canvas id="traj" role="img" aria-label="Line plot of the Collatz sequence for the chosen number"></canvas>
+<p id="info"></p>
+</section>
+</main>
+
+<script>
+(function(){
+var $=function(i){return document.getElementById(i)};
+var N=100000, steps, peak, selected=27;
+var fmt=function(x){return Number(x).toLocaleString("en-US")};
+
+function compute(){
+  N=+$("lim").value;
+  steps=new Uint16Array(N+1); peak=new Float64Array(N+1);
+  steps[1]=0; peak[1]=1;
+  for(var n=2;n<=N;n++){
+    var x=n,s=0,p=n;
+    while(x>=n){
+      x=(x%2===0)?x/2:3*x+1; s++;
+      if(x>p)p=x;
+    }
+    steps[n]=s+steps[x];
+    peak[n]=Math.max(p,peak[x]);
+  }
+}
+function best(arr){var b=1;for(var i=2;i<=N;i++)if(arr[i]>arr[b])b=i;return b}
+
+function css(v){return getComputedStyle(document.documentElement).getPropertyValue(v).trim()}
+function setup(c){
+  var r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  c.width=Math.round(r.width*d);c.height=Math.round(r.height*d);
+  var g=c.getContext("2d");g.setTransform(d,0,0,d,0,0);
+  return {g:g,w:r.width,h:r.height};
+}
+var PAD={l:52,r:12,t:10,b:28};
+
+function axes(g,w,h,xmax,ymax,ylabel,xlabel,logy){
+  g.strokeStyle=css("--line");g.fillStyle=css("--mute");g.lineWidth=1;g.font="12px system-ui,sans-serif";
+  var pw=w-PAD.l-PAD.r,ph=h-PAD.t-PAD.b,i;
+  g.textAlign="right";g.textBaseline="middle";
+  for(i=0;i<=4;i++){
+    var y=PAD.t+ph-ph*i/4;
+    g.beginPath();g.moveTo(PAD.l,y);g.lineTo(w-PAD.r,y);g.stroke();
+    var v=logy?Math.pow(10,Math.log10(ymax)*i/4):ymax*i/4;
+    g.fillText(v>=1e4?v.toExponential(0).replace("e+","e"):fmt(Math.round(v)),PAD.l-6,y);
+  }
+  g.textAlign="center";g.textBaseline="top";
+  for(i=0;i<=4;i++){
+    var x=PAD.l+pw*i/4;
+    g.fillText(fmt(Math.round(xmax*i/4)),x,h-PAD.b+8);
+  }
+  g.textAlign="left";g.textBaseline="top";
+  g.fillText(ylabel,PAD.l+4,PAD.t+2);
+  g.textAlign="right";g.fillText(xlabel,w-PAD.r,PAD.t+2);
+  return {pw:pw,ph:ph};
+}
+
+function drawOverview(){
+  var c=$("ov"),o=setup(c),g=o.g,m=$("metric").value,arr=m==="steps"?steps:peak,logy=m==="peak";
+  var max=arr[best(arr)];
+  var ymax=logy?max:Math.ceil(max/50)*50;
+  var a=axes(g,o.w,o.h,N,ymax,m==="steps"?"steps":"peak value","starting number",logy);
+  var lmax=Math.log10(ymax);
+  g.fillStyle=css("--dot");g.globalAlpha=N>10000?0.35:0.6;
+  var sz=N>10000?1.5:2.5;
+  for(var n=1;n<=N;n++){
+    var v=arr[n],f=logy?Math.log10(Math.max(v,1))/lmax:v/ymax;
+    g.fillRect(PAD.l+a.pw*n/N-sz/2,PAD.t+a.ph-a.ph*f-sz/2,sz,sz);
+  }
+  g.globalAlpha=1;
+  if(selected<=N){
+    var vs=arr[selected],fs=logy?Math.log10(Math.max(vs,1))/lmax:vs/ymax;
+    var px=PAD.l+a.pw*selected/N,py=PAD.t+a.ph-a.ph*fs;
+    g.strokeStyle=css("--hi");g.lineWidth=2;g.beginPath();g.arc(px,py,6,0,6.2832);g.stroke();
+  }
+  $("ovSub").textContent=m==="steps"
+    ? "Longest run under "+fmt(N)+": "+fmt(best(steps))+" takes "+fmt(max)+" steps."
+    : "Highest peak under "+fmt(N)+": "+fmt(best(peak))+" climbs to "+fmt(max)+".";
+}
+
+function traj(n){
+  var t=[n],x=n,guard=0;
+  while(x!==1&&guard++<100000){x=(x%2===0)?x/2:3*x+1;t.push(x)}
+  return t;
+}
+function drawTraj(){
+  var n=Math.max(1,Math.min(1e12,Math.floor(+$("n").value)||1));
+  var t=traj(n),max=Math.max.apply(null,t),logy=$("log").checked;
+  var c=$("traj"),o=setup(c),g=o.g,len=t.length-1||1;
+  var ymax=max<4?4:max;
+  var a=axes(g,o.w,o.h,len,ymax,"value","step",logy);
+  var lmax=Math.log10(ymax);
+  g.strokeStyle=css("--dot");g.lineWidth=1.5;g.beginPath();
+  t.forEach(function(v,i){
+    var f=logy?Math.log10(Math.max(v,1))/lmax:v/ymax;
+    var px=PAD.l+a.pw*i/len,py=PAD.t+a.ph-a.ph*f;
+    i?g.lineTo(px,py):g.moveTo(px,py);
+  });
+  g.stroke();
+  $("info").innerHTML="<b>"+fmt(n)+"</b> reaches 1 in <b>"+fmt(t.length-1)+"</b> steps, peaking at <b>"+fmt(max)+"</b>."+(t[t.length-1]!==1?" (Stopped early: sequence too long to plot.)":"");
+}
+
+function pick(n){selected=n;$("n").value=n;drawOverview();drawTraj()}
+function all(){drawOverview();drawTraj()}
+
+$("lim").onchange=function(){compute();if(selected>N)selected=N;$("n").value=selected;all()};
+$("metric").onchange=drawOverview;
+$("log").onchange=drawTraj;
+$("n").oninput=function(){selected=Math.floor(+$("n").value)||1;all()};
+$("bLong").onclick=function(){pick(best(steps))};
+$("bPeak").onclick=function(){pick(best(peak))};
+$("ov").onclick=function(e){
+  var r=this.getBoundingClientRect(),x=e.clientX-r.left,pw=r.width-PAD.l-PAD.r;
+  var n=Math.round((x-PAD.l)/pw*N);
+  if(n>=1&&n<=N)pick(n);
+};
+window.addEventListener("resize",all);
+if(window.matchMedia)window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",all);
+
+compute();all();
+})();
+</script>
+</body>
+</html>
